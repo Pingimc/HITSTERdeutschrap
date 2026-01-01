@@ -1,1 +1,246 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Hits da – Deutschrap Edition</title>
+  <link rel="stylesheet" href="style.css"/>
+
+  <!-- QR Scanner Lib -->
+  <script src="https://unpkg.com/html5-qrcode"></script>
+
+  <!-- YouTube IFrame API (für Pause/Play + Ended-Event) -->
+  <script src="https://www.youtube.com/iframe_api"></script>
+</head>
+
+<body>
+  <div class="container">
+
+    <!-- VIEW 1: MENU -->
+    <div id="viewMenu" class="view active">
+      <h1>Hits da – Deutschrap Edition</h1>
+      <div class="card">
+        <button id="btnMenuPlay" class="primary">PLAY</button>
+        <div class="small">
+          Tippe auf PLAY, erlaube Kamera, scanne eine Karte. Titel/Artist werden hier nicht angezeigt.
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 2: SCANNER -->
+    <div id="viewScanner" class="view">
+      <div class="topbar">
+        <button id="btnScannerClose" class="iconbtn">×</button>
+        <div class="title">Scanner</div>
+      </div>
+
+      <div class="card">
+        <div id="scanner"></div>
+        <div id="scanStatus" class="small">Kamera wird gestartet …</div>
+      </div>
+    </div>
+
+    <!-- VIEW 3: PLAYER -->
+    <div id="viewPlayer" class="view">
+      <div class="topbar">
+        <button id="btnPlayerBack" class="iconbtn">←</button>
+        <div class="title">Player</div>
+      </div>
+
+      <div class="card">
+        <div class="badge" id="trackBadge">Track</div>
+
+        <div style="margin-top:12px;">
+          <div id="playerFrame"></div>
+        </div>
+
+        <div class="row">
+          <button id="btnToggle" class="primary">Play</button>
+          <button id="btnStop" class="secondary">Stop</button>
+        </div>
+
+        <div id="playerStatus" class="small">
+          Hinweis: Auf Handys kann Autoplay blockiert sein. Dann einmal „Play“ tippen.
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="songs.js"></script>
+
+  <script>
+    // ----------------------------
+    // View helpers
+    // ----------------------------
+    const viewMenu    = document.getElementById("viewMenu");
+    const viewScanner = document.getElementById("viewScanner");
+    const viewPlayer  = document.getElementById("viewPlayer");
+
+    function showView(view) {
+      [viewMenu, viewScanner, viewPlayer].forEach(v => v.classList.remove("active"));
+      view.classList.add("active");
+    }
+
+    // ----------------------------
+    // Scanner logic
+    // ----------------------------
+    let qr = null;
+    const scanStatus = document.getElementById("scanStatus");
+
+    async function startScanner() {
+      showView(viewScanner);
+      scanStatus.textContent = "Kamera läuft. QR-Code ins Feld halten.";
+
+      // Falls vorher schon aktiv: sauber stoppen
+      await stopScannerSilently();
+
+      qr = new Html5Qrcode("scanner");
+      const config = { fps: 12, qrbox: { width: 240, height: 240 } };
+
+      try {
+        await qr.start(
+          { facingMode: "environment" },
+          config,
+          (decodedText) => {
+            const code = (decodedText || "").trim();
+            onCodeScanned(code);
+          }
+        );
+      } catch (e) {
+        scanStatus.textContent = "Kamera-Start fehlgeschlagen. Wichtig: Seite muss über HTTPS laufen und Kamera erlaubt sein.";
+      }
+    }
+
+    async function stopScannerSilently() {
+      try {
+        if (qr) {
+          await qr.stop();
+          qr.clear();
+          qr = null;
+        }
+      } catch(_) {}
+    }
+
+    // ----------------------------
+    // YouTube Player logic (Pause/Play + Ended)
+    // ----------------------------
+    let ytPlayer = null;
+    let ytReady = false;
+    let currentCode = null;
+
+    const trackBadge   = document.getElementById("trackBadge");
+    const playerStatus = document.getElementById("playerStatus");
+    const btnToggle    = document.getElementById("btnToggle");
+
+    // YouTube API callback
+    function onYouTubeIframeAPIReady() {
+      ytReady = true;
+    }
+    window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
+
+    function loadTrackByCode(code) {
+      currentCode = code;
+      const entry = SONGS[code];
+
+      showView(viewPlayer);
+
+      // Badge zeigt nur die ID (spoilerfrei)
+      trackBadge.textContent = `Code: ${code}`;
+
+      if (!entry) {
+        playerStatus.textContent = "Unbekannter Code. Bitte zurück und erneut scannen.";
+        document.getElementById("playerFrame").innerHTML = "";
+        btnToggle.textContent = "Play";
+        return;
+      }
+
+      if (!ytReady) {
+        playerStatus.textContent = "YouTube-Player lädt noch … Bitte 1–2 Sekunden, dann erneut Play.";
+      } else {
+        playerStatus.textContent = "Bereit. Tippe auf Play, falls es nicht automatisch startet.";
+      }
+
+      // Player erstellen oder neu laden
+      const frame = document.getElementById("playerFrame");
+      frame.innerHTML = ""; // reset
+
+      ytPlayer = new YT.Player("playerFrame", {
+        height: "360",
+        width: "640",
+        videoId: entry.youtubeId,
+        playerVars: {
+          rel: 0,
+          modestbranding: 1
+        },
+        events: {
+          onReady: () => {
+            btnToggle.textContent = "Pause"; // wir versuchen Play sofort
+            try { ytPlayer.playVideo(); } catch(_) { btnToggle.textContent = "Play"; }
+          },
+          onStateChange: (ev) => {
+            // ENDED: pausiert/stoppt und Button zurück auf Play
+            if (ev.data === YT.PlayerState.ENDED) {
+              btnToggle.textContent = "Play";
+              playerStatus.textContent = "Track beendet.";
+            }
+            if (ev.data === YT.PlayerState.PAUSED) {
+              btnToggle.textContent = "Play";
+            }
+            if (ev.data === YT.PlayerState.PLAYING) {
+              btnToggle.textContent = "Pause";
+            }
+          }
+        }
+      });
+    }
+
+    function togglePlayPause() {
+      if (!ytPlayer) return;
+      const state = ytPlayer.getPlayerState?.();
+      // 1 = playing, 2 = paused
+      if (state === 1) ytPlayer.pauseVideo();
+      else ytPlayer.playVideo();
+    }
+
+    function stopTrack() {
+      if (!ytPlayer) return;
+      ytPlayer.stopVideo();
+      btnToggle.textContent = "Play";
+      playerStatus.textContent = "Gestoppt.";
+    }
+
+    // ----------------------------
+    // Scan callback => stop scanner => load track
+    // ----------------------------
+    async function onCodeScanned(code) {
+      scanStatus.textContent = `Erkannt: ${code} – lade Track …`;
+      await stopScannerSilently();
+      loadTrackByCode(code);
+    }
+
+    // ----------------------------
+    // Buttons / Navigation
+    // ----------------------------
+    document.getElementById("btnMenuPlay").addEventListener("click", startScanner);
+
+    // X im Scanner => zurück ins Menü
+    document.getElementById("btnScannerClose").addEventListener("click", async () => {
+      await stopScannerSilently();
+      showView(viewMenu);
+    });
+
+    // ← im Player => zurück zum Scanner (so wie du willst)
+    document.getElementById("btnPlayerBack").addEventListener("click", async () => {
+      // Track weiterlaufen lassen oder stoppen? Du wolltest primär Navigation.
+      // Ich stoppe ihn sauber, damit es nicht parallel läuft:
+      try { stopTrack(); } catch(_) {}
+      startScanner();
+    });
+
+    btnToggle.addEventListener("click", togglePlayPause);
+    document.getElementById("btnStop").addEventListener("click", stopTrack);
+  </script>
+</body>
+</html>
 
